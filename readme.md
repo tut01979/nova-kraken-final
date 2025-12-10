@@ -1,0 +1,1 @@
+"Nova Kraken Futures Bot - Listo para cobrar" | Out-File -Encoding utf8 README.md
