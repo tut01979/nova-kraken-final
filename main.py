@@ -1,4 +1,3 @@
-@"
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import ccxt.async_support as ccxt
@@ -47,4 +46,4 @@ async def webhook(request: Request):
     except Exception as e:
         print(f"ERROR → {e}")
         return {"error": str(e)}, 400
-"@ | Out-File -Encoding utf8 main.py
+| Out-File -Encoding utf8 main.py
