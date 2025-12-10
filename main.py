@@ -46,4 +46,3 @@ async def webhook(request: Request):
     except Exception as e:
         print(f"ERROR → {e}")
         return {"error": str(e)}, 400
-| Out-File -Encoding utf8 main.py
