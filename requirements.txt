@@ -2,4 +2,4 @@
 fastapi
 uvicorn
 pydantic
-ccxt
+ccxt==4.3.50
