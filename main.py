@@ -1,49 +1,29 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
+import asyncio
 import ccxt.async_support as ccxt
 import os
-import json
+import logging
 
-app = FastAPI()
+logging.basicConfig(level=logging.INFO)
 
-exchange = ccxt.krakenfutures({
-    'apiKey': os.getenv("KRAKEN_API_KEY"),  # ← Clave pública (la larga YLeoo1Cl...)
-    'secret': os.getenv("KRAKEN_SECRET"),   # ← Clave privada (la corta S9j/O2D...)
-    'password': os.getenv("KRAKEN_API_KEY"),  # ← Clave pública repetida (truco de ccxt)
-    'enableRateLimit': True,
-})
+async def test_connection():
+    exchange = ccxt.krakenfutures({
+        'apiKey': os.getenv('KRAKEN_API_KEY'),
+        'secret': os.getenv('KRAKEN_SECRET'),
+        # Si el "truco password" sigue siendo necesario, agrégalo:
+        # 'password': os.getenv('KRAKEN_PASSWORD'),  # Crea esta variable si aplica
+        'enableRateLimit': True,
+        'options': {'defaultType': 'future'},
+    })
 
-class Signal(BaseModel):
-    action: str
-    symbol: str
-    quantity: str
-    price: float
-    stop_loss: float = None
-    take_profit: float = None
-    exchange: str
-    market: str
-
-@app.get("/")
-async def home():
-    return {"status": "NOVA KRAKEN - COBRANDO"}
-
-@app.post("/webhook")
-async def webhook(request: Request):
     try:
-        raw = await request.body()
-        data = raw.decode("utf-8").strip()
-        print(f"RAW recibido: {data}")
-        payload = json.loads(data)
-        signal = Signal(**payload)
-        print(f"SEÑAL → {signal.action.upper()} {signal.quantity} {signal.symbol} @ {signal.price}")
-
-        side = "buy" if signal.action == "buy" else "sell"
-        symbol = signal.symbol.replace("-PERP", "USD")
-
-        order = await exchange.create_market_order(symbol, side, float(signal.quantity))
-        print(f"ORDEN EJECUTADA → {order['id']}")
-
-        return {"status": "OK"}
+        balance = await exchange.fetch_balance()
+        print("¡Conexión exitosa! Balance:")
+        print(balance)
     except Exception as e:
-        print(f"ERROR → {e}")
-        return {"error": str(e)}, 400
+        print("Error:", str(e))
+        print("Tipo de error:", type(e).__name__)
+    finally:
+        await exchange.close()
+
+if __name__ == "__main__":
+    asyncio.run(test_connection())
