@@ -7,8 +7,9 @@ import json
 app = FastAPI()
 
 exchange = ccxt.krakenfutures({
-    'apiKey': os.getenv("KRAKEN_API_KEY"),
+    'apiKey': os.getenv("KRAKEN_SECRET"),  # Secret como apiKey (trick de ccxt)
     'secret': os.getenv("KRAKEN_SECRET"),
+    'password': os.getenv("KRAKEN_API_KEY"),  # Clave pública va aquí
     'enableRateLimit': True,
 })
 
