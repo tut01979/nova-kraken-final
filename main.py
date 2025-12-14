@@ -1,14 +1,12 @@
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
 import os
 import ccxt.async_support as ccxt
 import logging
-import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova - Kraken Futures Trading Bot")
+app = FastAPI(title="Nova - Kraken Futures Bot (Final)")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -19,75 +17,71 @@ exchange = ccxt.krakenfutures({
 
 SYMBOL = 'PI_SOLUSD'
 QUANTITY = 1.0
-ATR_MULTIPLIER = 2.0
-DEFAULT_ATR = 10.0  # Valor fallback si no viene ATR
-
-class AlertPayload(BaseModel):
-    signal: str
-    atr: float | None = None
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot activo", "symbol": SYMBOL, "quantity": QUANTITY}
+    return {"status": "Nova Bot FINAL activo", "symbol": SYMBOL, "quantity": QUANTITY, "mode": "Usando SL/TP desde Pine Script"}
 
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
-        body = await request.body()
-        text = body.decode('utf-8')
-        logger.info(f"Webhook recibido (raw): {text}")
+        payload = await request.json()
+        logger.info(f"Webhook recibido: {payload}")
 
-        # Intentar parsear como JSON primero
-        try:
-            payload = json.loads(text)
-            alert = AlertPayload(**payload)
-        except:
-            # Si falla, asumir texto plano con placeholders resueltos
-            text_lower = text.lower()
-            if 'buy' in text_lower or 'long' in text_lower:
-                alert = AlertPayload(signal="long", atr=None)
-            elif 'sell' in text_lower or 'short' in text_lower:
-                alert = AlertPayload(signal="short", atr=None)
-            else:
-                return {"status": "error", "message": "No se detectó señal válida"}
+        # Validar campos mínimos
+        action = payload.get('action')
+        if action not in ['buy', 'sell']:
+            return {"status": "error", "message": "action debe ser 'buy' o 'sell'"}
 
-        atr_value = alert.atr or DEFAULT_ATR
-        sl_tp_distance = ATR_MULTIPLIER * atr_value
-        side = 'buy' if alert.signal in ["long", "buy"] else 'sell'
+        price = float(payload['price'])
+        stop_loss = float(payload['stop_loss'])
+        take_profit = float(payload['take_profit'])
 
+        side = 'buy' if action == 'buy' else 'sell'
+        sl_side = 'sell' if action == 'buy' else 'buy'
+        tp_side = sl_side  # mismo lado para cerrar
+
+        # Orden principal: market
         main_order = await exchange.create_order(
             symbol=SYMBOL,
             type='market',
             side=side,
             amount=QUANTITY,
         )
+        fill_price = main_order.get('average') or main_order.get('price') or price
+        logger.info(f"Orden principal {action.upper()} ejecutada @ {fill_price}")
 
-        price = main_order.get('average') or main_order.get('price')
-
-        # SL y TP reduce-only
+        # Stop Loss (reduce-only)
         await exchange.create_order(
             symbol=SYMBOL,
             type='stop',
-            side='sell' if side == 'buy' else 'buy',
+            side=sl_side,
             amount=QUANTITY,
-            price=price - sl_tp_distance if side == 'buy' else price + sl_tp_distance,
+            price=stop_loss,
             params={'reduce-only': True}
         )
 
+        # Take Profit (limit reduce-only)
         await exchange.create_order(
             symbol=SYMBOL,
             type='limit',
-            side='sell' if side == 'buy' else 'buy',
+            side=tp_side,
             amount=QUANTITY,
-            price=price + sl_tp_distance if side == 'buy' else price - sl_tp_distance,
+            price=take_profit,
             params={'reduce-only': True, 'postOnly': True}
         )
 
-        logger.info(f"{alert.signal.upper()} ejecutado | Precio ≈ {price} | SL/TP ±{sl_tp_distance:.2f}")
-        return {"status": "success", "signal": alert.signal, "price": price}
+        logger.info(f"SL colocado en {stop_loss} | TP colocado en {take_profit}")
+        return {
+            "status": "success",
+            "action": action.upper(),
+            "fill_price": fill_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit
+        }
 
     except Exception as e:
-        logger.error(f"Error crítico: {str(e)}", exc_info=True)
+        logger.error(f"Error crítico en webhook: {str(e)}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
 @app.get("/test-balance")
