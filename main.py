@@ -1,29 +1,30 @@
-import asyncio
-import ccxt.async_support as ccxt
+from fastapi import FastAPI
 import os
-import logging
 
-logging.basicConfig(level=logging.INFO)
+# Esto es CRUCIAL: la variable debe llamarse exactamente "app"
+app = FastAPI(
+    title="Nova Kraken Futures Bot - Test",
+    description="Módulo de trading TerraNova - Prueba de conexión",
+    version="1.0"
+)
 
-async def test_connection():
-    exchange = ccxt.krakenfutures({
-        'apiKey': os.getenv('KRAKEN_API_KEY'),
-        'secret': os.getenv('KRAKEN_SECRET'),
-        # Si el "truco password" sigue siendo necesario, agrégalo:
-        # 'password': os.getenv('KRAKEN_PASSWORD'),  # Crea esta variable si aplica
-        'enableRateLimit': True,
-        'options': {'defaultType': 'future'},
-    })
+@app.get("/")
+async def root():
+    return {
+        "status": "OK",
+        "message": "Bot Nova Kraken Futures activo y listo",
+        "environment": "Production" if os.getenv("RAILWAY_ENVIRONMENT") else "Local/Development",
+        "kraken_api_key_set": bool(os.getenv("KRAKEN_API_KEY")),
+        "kraken_secret_set": bool(os.getenv("KRAKEN_SECRET")),
+        "hint": "Si ves true en las keys, las variables están cargadas correctamente"
+    }
 
-    try:
-        balance = await exchange.fetch_balance()
-        print("¡Conexión exitosa! Balance:")
-        print(balance)
-    except Exception as e:
-        print("Error:", str(e))
-        print("Tipo de error:", type(e).__name__)
-    finally:
-        await exchange.close()
+# Opcional: endpoint de health para monitoreo
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
 
+# Esto es importante para cuando corras localmente con uvicorn
 if __name__ == "__main__":
-    asyncio.run(test_connection())
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)), reload=True)

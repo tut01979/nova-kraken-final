@@ -1,5 +1,4 @@
-
-fastapi
-uvicorn
-pydantic
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
 ccxt==4.3.50
