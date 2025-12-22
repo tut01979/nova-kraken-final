@@ -39,20 +39,17 @@ async def webhook(request: Request):
         price = float(payload['price'])
         stop_loss = float(payload['stop_loss'])
 
-        # --- CÁLCULO 100% EQUITY REAL (más robusto) ---
+        # CÁLCULO 100% EQUITY REAL
         balance = await exchange.fetch_balance()
         logger.info(f"Balance recibido: {balance}")
 
-        # Intentar margen disponible
-        available_margin = 41.0  # fallback seguro
-        if 'info' in balance and 'marginAvailable' in balance['info']:
-            available_margin = float(balance['info']['marginAvailable'].get('USD', 41.0))
+        available_margin = 41.0  # fallback
+        if 'info' in balance and 'flex' in balance['info'] and 'availableMargin' in balance['info']['flex']:
+            available_margin = float(balance['info']['flex']['availableMargin'])
         elif 'total' in balance:
-            # Usar total USD o XBT convertido
-            available_margin = float(balance['total'].get('USD', balance['total'].get('XBT', 0) * price))
+            available_margin = float(balance['total'].get('USD', 41.0))
 
-        # Quantity = margen disponible * 10x / precio (aprox 100% exposición)
-        quantity = (available_margin * 10) / price
+        quantity = (available_margin * 10) / price  # 10x
 
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
@@ -61,8 +58,15 @@ async def webhook(request: Request):
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
         logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity:.5f}")
 
-        # Stop Loss reduce-only
-        await exchange.create_order(SYMBOL, 'stop', sl_side, quantity, stop_loss, params={'reduceOnly': True})
+        # Stop Loss reduce-only (tipo correcto para Kraken Futures)
+        await exchange.create_order(
+            SYMBOL, 
+            'stopLoss',  # tipo correcto
+            sl_side, 
+            quantity, 
+            stop_loss, 
+            params={'reduceOnly': True}
+        )
         logger.info(f"SL colocado en {stop_loss}")
 
         logger.info(f"SEÑAL → {action.upper()} {quantity:.5f} {SYMBOL} @ {price}")
