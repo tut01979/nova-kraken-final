@@ -27,30 +27,46 @@ async def webhook(request: Request):
         payload = await request.json()
         logger.info(f"RAW recibido: {payload}")
 
+        if not payload:
+            logger.warning("Payload vacío ignorado")
+            return {"status": "ignored", "message": "payload vacío"}
+
         action = payload.get('action')
         if action not in ['buy', 'sell']:
-            return {"status": "error", "message": "action inválido"}
+            logger.error("Action inválido")
+            return {"status": "error", "message": "action debe ser buy o sell"}
 
         price = float(payload['price'])
         stop_loss = float(payload['stop_loss'])
 
-        # Calcular quantity = 100% equity real
+        # --- CÁLCULO 100% EQUITY REAL (más robusto) ---
         balance = await exchange.fetch_balance()
-        collateral = balance['info']['marginAvailable'] or balance['total'].get('BTC', 0) or balance['total'].get('XBT', 0)
-        quantity = (collateral * 10) / price  # 10x leverage approx
+        logger.info(f"Balance recibido: {balance}")
+
+        # Intentar margen disponible
+        available_margin = 41.0  # fallback seguro
+        if 'info' in balance and 'marginAvailable' in balance['info']:
+            available_margin = float(balance['info']['marginAvailable'].get('USD', 41.0))
+        elif 'total' in balance:
+            # Usar total USD o XBT convertido
+            available_margin = float(balance['total'].get('USD', balance['total'].get('XBT', 0) * price))
+
+        # Quantity = margen disponible * 10x / precio (aprox 100% exposición)
+        quantity = (available_margin * 10) / price
 
         side = 'buy' if action == 'buy' else 'sell'
+        sl_side = 'sell' if action == 'buy' else 'buy'
 
         # Orden principal market
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
-        logger.info(f"ORDEN EJECUTADA → {main_order['id']}")
+        logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity:.5f}")
 
-        # SL reduce-only
-        sl_side = 'sell' if action == 'buy' else 'buy'
+        # Stop Loss reduce-only
         await exchange.create_order(SYMBOL, 'stop', sl_side, quantity, stop_loss, params={'reduceOnly': True})
+        logger.info(f"SL colocado en {stop_loss}")
 
-        logger.info(f"SEÑAL → {action.upper()} {quantity:.5f} {SYMBOL} @ {price} | SL {stop_loss}")
-        return {"status": "success", "quantity": quantity}
+        logger.info(f"SEÑAL → {action.upper()} {quantity:.5f} {SYMBOL} @ {price}")
+        return {"status": "success", "quantity": quantity, "sl": stop_loss}
 
     except Exception as e:
         logger.error(f"ERROR → {str(e)}")
