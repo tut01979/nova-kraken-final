@@ -29,25 +29,24 @@ async def webhook(request: Request):
 
         if not payload:
             logger.warning("Payload vacío ignorado")
-            return {"status": "ignored", "message": "payload vacío"}
+            return {"status": "ignored"}
 
         action = payload.get('action')
         if action not in ['buy', 'sell']:
-            logger.error("Action inválido")
-            return {"status": "error", "message": "action debe ser buy o sell"}
+            return {"status": "error", "message": "action inválido"}
 
         price = float(payload['price'])
         stop_loss = float(payload['stop_loss'])
 
-        # CÁLCULO 100% EQUITY REAL
+        # CÁLCULO 100% EQUITY REAL (corregido para flex account)
         balance = await exchange.fetch_balance()
         logger.info(f"Balance recibido: {balance}")
 
-        available_margin = 41.0  # fallback
+        available_margin = 225.0  # fallback
         if 'info' in balance and 'flex' in balance['info'] and 'availableMargin' in balance['info']['flex']:
             available_margin = float(balance['info']['flex']['availableMargin'])
         elif 'total' in balance:
-            available_margin = float(balance['total'].get('USD', 41.0))
+            available_margin = float(balance['total'].get('USD', 225.0))
 
         quantity = (available_margin * 10) / price  # 10x
 
@@ -58,19 +57,19 @@ async def webhook(request: Request):
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
         logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity:.5f}")
 
-        # Stop Loss reduce-only (tipo correcto para Kraken Futures)
+        # Stop Loss reduce-only (tipo correcto)
         await exchange.create_order(
-            SYMBOL, 
-            'stopLoss',  # tipo correcto
-            sl_side, 
-            quantity, 
-            stop_loss, 
-            params={'reduceOnly': True}
+            SYMBOL,
+            'stop',
+            sl_side,
+            quantity,
+            stop_loss,
+            params={'reduceOnly': True, 'triggerSignal': 'mark'}
         )
         logger.info(f"SL colocado en {stop_loss}")
 
         logger.info(f"SEÑAL → {action.upper()} {quantity:.5f} {SYMBOL} @ {price}")
-        return {"status": "success", "quantity": quantity, "sl": stop_loss}
+        return {"status": "success", "quantity": quantity}
 
     except Exception as e:
         logger.error(f"ERROR → {str(e)}")
