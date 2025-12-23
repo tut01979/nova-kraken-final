@@ -47,7 +47,7 @@ async def webhook(request: Request):
             available_margin = float(balance['info']['flex']['availableMargin'])
 
         # Leverage seguro: 5x en lugar de 10x para evitar insufficientFunds
-        leverage = 5  # más conservador, evita rechazos
+        leverage = 10  # más conservador, evita rechazos
         quantity = (available_margin * leverage) / price
 
         side = 'buy' if action == 'buy' else 'sell'
