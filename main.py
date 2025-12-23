@@ -45,8 +45,11 @@ async def webhook(request: Request):
         available_margin = 225.0  # fallback
         if 'info' in balance and 'flex' in balance['info'] and 'availableMargin' in balance['info']['flex']:
             available_margin = float(balance['info']['flex']['availableMargin'])
-        elif 'total' in balance:
-            available_margin = float(balance['total'].get('USD', 225.0))
+        else:
+            # Suma USD + valor BTC
+            usd = float(balance['total'].get('USD', 0))
+            btc = float(balance['total'].get('BTC', 0))
+            available_margin = usd + (btc * price)
 
         quantity = (available_margin * 10) / price  # 10x
 
@@ -57,14 +60,14 @@ async def webhook(request: Request):
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
         logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity:.5f}")
 
-        # Stop Loss reduce-only (tipo correcto)
+        # Stop Loss reduce-only (tipo correcto para Kraken Futures)
         await exchange.create_order(
             SYMBOL,
             'stop',
             sl_side,
             quantity,
             stop_loss,
-            params={'reduceOnly': True, 'triggerSignal': 'mark'}
+            params={'reduceOnly': True, 'triggerSignal': 'last'}
         )
         logger.info(f"SL colocado en {stop_loss}")
 
