@@ -6,7 +6,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Reversal + SL Final")
+app = FastAPI(title="Nova Kraken Bot - 5x Seguro Nochebuena")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -19,7 +19,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Reversal + SL activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot 5x Nochebuena activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,34 +42,29 @@ async def webhook(request: Request):
         balance = await exchange.fetch_balance()
         logger.info(f"Balance recibido: {balance}")
 
-        available_margin = 225.0  # fallback
+        available_margin = 191.0  # fallback
         if 'info' in balance and 'flex' in balance['info'] and 'availableMargin' in balance['info']['flex']:
             available_margin = float(balance['info']['flex']['availableMargin'])
 
-        leverage = 10  # 10x full
-        quantity = (available_margin * leverage) / price
+        quantity = (available_margin * 5) / price  # 5x seguro
 
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # REVERSAL: si posición abierta opuesta, cerrar primero
+        # Reversal simple: cierra posición opuesta si existe
         positions = await exchange.fetch_positions([SYMBOL])
-        current_position = positions[0] if positions else {}
-        current_side = current_position.get('side', 'none')
-        current_qty = float(current_position.get('contracts', 0))
-
-        if current_qty > 0 and action == 'sell':
-            logger.info("Reversal: cerrando long")
-            await exchange.create_order(SYMBOL, 'market', 'sell', current_qty)
-        elif current_qty > 0 and action == 'buy':
-            logger.info("Reversal: cerrando short")
-            await exchange.create_order(SYMBOL, 'market', 'buy', current_qty)
+        if positions:
+            pos = positions[0]
+            if pos['contracts'] > 0 and action == 'sell':
+                await exchange.create_order(SYMBOL, 'market', 'sell', pos['contracts'])
+            elif pos['contracts'] > 0 and action == 'buy':
+                await exchange.create_order(SYMBOL, 'market', 'buy', pos['contracts'])
 
         # Orden principal market
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
         logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity:.5f}")
 
-        # Stop Loss reduce-only (tipo correcto)
+        # Stop Loss reduce-only
         await exchange.create_order(
             SYMBOL,
             'stopLoss',
