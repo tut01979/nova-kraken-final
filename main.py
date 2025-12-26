@@ -6,7 +6,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - 5x Anti-Acumulación")
+app = FastAPI(title="Nova Kraken Bot - 5x + Reversal Seguro")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -19,7 +19,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot 5x Anti-Acumulación activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot 5x + Reversal activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +42,7 @@ async def webhook(request: Request):
         balance = await exchange.fetch_balance()
         logger.info(f"Balance recibido: {balance}")
 
-        available_margin = 225.0  # fallback
+        available_margin = 150.0  # fallback
         if 'info' in balance and 'flex' in balance['info'] and 'availableMargin' in balance['info']['flex']:
             available_margin = float(balance['info']['flex']['availableMargin'])
 
@@ -50,6 +50,17 @@ async def webhook(request: Request):
 
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
+
+        # REVERSAL: cierra posición opuesta si existe
+        positions = await exchange.fetch_positions([SYMBOL])
+        if positions:
+            pos = positions[0]
+            current_qty = float(pos.get('contracts', 0))
+            current_side = pos.get('side', 'none').lower()
+            if current_qty > 0 and current_side != side.lower():
+                close_side = 'sell' if current_side == 'buy' else 'buy'
+                await exchange.create_order(SYMBOL, 'market', close_side, current_qty)
+                logger.info(f"Reversal: cerrado {current_side} {current_qty}")
 
         # Orden principal market
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
