@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Final Sin Warning")
+app = FastAPI(title="Nova Kraken Bot - Reversal Robusto")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Final activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Reversal Robusto activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -39,30 +39,37 @@ async def webhook(request: Request):
         price = float(payload['price'])
         stop_loss = float(payload['stop_loss'])
 
-        # CÁLCULO MARGIN SIN WARNING
-        balance = await exchange.fetch_balance()
-        logger.info(f"Balance recibido: {balance}")
-
-        available_margin = 130.0  # fallback inicial
-        if 'info' in balance and 'flex' in balance['info'] and 'availableMargin' in balance['info']['flex']:
-            available_margin = float(balance['info']['flex']['availableMargin'])
-
-        quantity = round((available_margin * 5) / price, 5)
-        if quantity < 0.001:
-            return {"status": "error", "message": "quantity demasiado pequeña"}
-
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Reversal
+        # Reversal robusto
         positions = await exchange.fetch_positions([SYMBOL])
+        closed = False
         for pos in positions:
             curr_qty = float(pos.get('contracts', 0))
             curr_side = pos.get('side', '').lower()
-            if curr_qty > 0 and curr_side == ('buy' if side == 'sell' else 'sell'):
+            if curr_qty > 0 and curr_side != side.lower():
                 await exchange.create_order(SYMBOL, 'market', sl_side, curr_qty)
-                logger.info(f"Reversal: cerrado {sl_side} {curr_qty}")
-                await asyncio.sleep(2)
+                logger.info(f"Reversal: cerrado {curr_side} {curr_qty}")
+                closed = True
+
+        if closed:
+            await asyncio.sleep(5)  # Más tiempo para que Kraken libere margen
+            # Re-fetch balance para quantity actualizada
+            balance = await exchange.fetch_balance()
+            logger.info(f"Balance después reversal: {balance}")
+
+        # CÁLCULO MARGIN
+        balance = await exchange.fetch_balance() if not closed else balance  # usa el nuevo si reversal
+        available_margin = 130.0
+        try:
+            available_margin = float(balance['info']['flex']['availableMargin'])
+        except:
+            logger.warning("Fallback usado")
+
+        quantity = round((available_margin * 5) / price, 5)
+        if quantity < 0.001:
+            return {"status": "error", "message": "quantity pequeña"}
 
         # Orden principal
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
