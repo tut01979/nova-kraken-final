@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Reversal Robusto")
+app = FastAPI(title="Nova Kraken Bot - Check Order")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Reversal Robusto activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Check Order activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -54,18 +54,16 @@ async def webhook(request: Request):
                 closed = True
 
         if closed:
-            await asyncio.sleep(5)  # Más tiempo para que Kraken libere margen
-            # Re-fetch balance para quantity actualizada
+            await asyncio.sleep(5)
             balance = await exchange.fetch_balance()
-            logger.info(f"Balance después reversal: {balance}")
+        else:
+            balance = await exchange.fetch_balance()
 
-        # CÁLCULO MARGIN
-        balance = await exchange.fetch_balance() if not closed else balance  # usa el nuevo si reversal
         available_margin = 130.0
         try:
             available_margin = float(balance['info']['flex']['availableMargin'])
         except:
-            logger.warning("Fallback usado")
+            pass
 
         quantity = round((available_margin * 5) / price, 5)
         if quantity < 0.001:
@@ -73,22 +71,31 @@ async def webhook(request: Request):
 
         # Orden principal
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
-        logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity:.5f}")
+        logger.info(f"ORDEN ENVIADA → {main_order['id']} | Quantity: {quantity:.5f}")
 
-        # SL
-        await exchange.create_order(
-            SYMBOL,
-            'stop',
-            sl_side,
-            quantity,
-            None,
-            params={
-                'reduceOnly': True,
-                'triggerSignal': 'last',
-                'triggerPrice': stop_loss
-            }
-        )
-        logger.info(f"SL colocado en {stop_loss}")
+        # Check si se llenó
+        await asyncio.sleep(3)  # Espera fill
+        order_status = await exchange.fetch_order(main_order['id'])
+        if order_status['status'] == 'closed' or order_status['filled'] > 0:
+            logger.info(f"ORDEN CONFIRMADA → filled {order_status['filled']}")
+        else:
+            logger.warning(f"ORDEN RECHAZADA o no filled → status {order_status['status']}")
+
+        # SL (solo si filled)
+        if order_status['filled'] > 0:
+            await exchange.create_order(
+                SYMBOL,
+                'stop',
+                sl_side,
+                quantity,
+                None,
+                params={
+                    'reduceOnly': True,
+                    'triggerSignal': 'last',
+                    'triggerPrice': stop_loss
+                }
+            )
+            logger.info(f"SL colocado en {stop_loss}")
 
         return {"status": "success"}
 
