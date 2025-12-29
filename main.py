@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Check Order")
+app = FastAPI(title="Nova Kraken Bot - Ejecuta Real")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Check Order activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Ejecuta Real activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +42,7 @@ async def webhook(request: Request):
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Reversal robusto
+        # Reversal
         positions = await exchange.fetch_positions([SYMBOL])
         closed = False
         for pos in positions:
@@ -52,50 +52,55 @@ async def webhook(request: Request):
                 await exchange.create_order(SYMBOL, 'market', sl_side, curr_qty)
                 logger.info(f"Reversal: cerrado {curr_side} {curr_qty}")
                 closed = True
+                await asyncio.sleep(5)
 
-        if closed:
-            await asyncio.sleep(5)
-            balance = await exchange.fetch_balance()
-        else:
-            balance = await exchange.fetch_balance()
-
+        # Balance
+        balance = await exchange.fetch_balance()
         available_margin = 130.0
         try:
             available_margin = float(balance['info']['flex']['availableMargin'])
         except:
-            pass
+            logger.warning("Fallback usado")
 
-        quantity = round((available_margin * 5) / price, 5)
-        if quantity < 0.001:
-            return {"status": "error", "message": "quantity pequeña"}
+        # Quantity entero (contratos USD, más seguro)
+        exposure = available_margin * 5
+        quantity = int(exposure)  # entero, Kraken lo acepta mejor
 
-        # Orden principal
-        main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
-        logger.info(f"ORDEN ENVIADA → {main_order['id']} | Quantity: {quantity:.5f}")
+        if quantity < 10:  # mínimo razonable
+            return {"status": "error", "message": "quantity mínima"}
 
-        # Check si se llenó
-        await asyncio.sleep(3)  # Espera fill
-        order_status = await exchange.fetch_order(main_order['id'])
-        if order_status['status'] == 'closed' or order_status['filled'] > 0:
-            logger.info(f"ORDEN CONFIRMADA → filled {order_status['filled']}")
-        else:
-            logger.warning(f"ORDEN RECHAZADA o no filled → status {order_status['status']}")
+        # Orden principal con retry
+        main_order = None
+        for attempt in range(2):
+            main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
+            logger.info(f"ORDEN ENVIADA (attempt {attempt+1}) → {main_order['id']} | Quantity: {quantity}")
 
-        # SL (solo si filled)
-        if order_status['filled'] > 0:
-            await exchange.create_order(
-                SYMBOL,
-                'stop',
-                sl_side,
-                quantity,
-                None,
-                params={
-                    'reduceOnly': True,
-                    'triggerSignal': 'last',
-                    'triggerPrice': stop_loss
-                }
-            )
-            logger.info(f"SL colocado en {stop_loss}")
+            await asyncio.sleep(5)
+            order_status = await exchange.fetch_order(main_order['id'], SYMBOL)
+            if order_status['filled'] > 0:
+                logger.info(f"ORDEN CONFIRMADA → filled {order_status['filled']}")
+                break
+            else:
+                logger.warning(f"ORDEN NO FILLED → retry")
+
+        if order_status['filled'] == 0:
+            logger.error("ORDEN RECHAZADA FINALMENTE")
+            return {"status": "rejected"}
+
+        # SL
+        await exchange.create_order(
+            SYMBOL,
+            'stop',
+            sl_side,
+            quantity,
+            None,
+            params={
+                'reduceOnly': True,
+                'triggerSignal': 'last',
+                'triggerPrice': stop_loss
+            }
+        )
+        logger.info(f"SL colocado en {stop_loss}")
 
         return {"status": "success"}
 
