@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Reversal Rápido")
+app = FastAPI(title="Nova Kraken Bot - Definitivo")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot 5x + Reversal Rápido activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Definitivo activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -39,20 +39,25 @@ async def webhook(request: Request):
         price = float(payload['price'])
         stop_loss = float(payload['stop_loss'])
 
-        # CÁLCULO 100% EQUITY REAL
+        # CÁLCULO MARGIN DEFINITIVO
         balance = await exchange.fetch_balance()
         logger.info(f"Balance recibido: {balance}")
 
-        available_margin = float(balance['info']['flex']['availableMargin'])
+        available_margin = 130.0  # fallback inicial seguro
+        try:
+            available_margin = float(balance['info']['flex']['availableMargin'])
+            logger.info(f"Margen real usado: {available_margin}")
+        except (KeyError, TypeError, ValueError):
+            logger.warning("No se pudo leer 'flex', usando fallback 130.0")
 
         quantity = round((available_margin * 5) / price, 5)
-        if quantity < 0.001:  # mínimo razonable
+        if quantity < 0.001:
             return {"status": "error", "message": "quantity demasiado pequeña"}
 
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Reversal: cierra si hay posición contraria
+        # Reversal
         positions = await exchange.fetch_positions([SYMBOL])
         for pos in positions:
             curr_qty = float(pos.get('contracts', 0))
@@ -60,13 +65,13 @@ async def webhook(request: Request):
             if curr_qty > 0 and curr_side == ('buy' if side == 'sell' else 'sell'):
                 await exchange.create_order(SYMBOL, 'market', sl_side, curr_qty)
                 logger.info(f"Reversal: cerrado {sl_side} {curr_qty}")
-                await asyncio.sleep(2)  # Espera a que libere margen
+                await asyncio.sleep(2)
 
-        # Abre nueva
+        # Orden principal
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
         logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity:.5f}")
 
-        # Stop Loss
+        # SL
         await exchange.create_order(
             SYMBOL,
             'stop',
@@ -81,7 +86,6 @@ async def webhook(request: Request):
         )
         logger.info(f"SL colocado en {stop_loss}")
 
-        logger.info(f"SEÑAL → {action.upper()} {quantity:.5f} {SYMBOL} @ {price}")
         return {"status": "success"}
 
     except Exception as e:
