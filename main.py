@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Definitivo")
+app = FastAPI(title="Nova Kraken Bot - Final Sin Warning")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Definitivo activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Final activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -39,16 +39,13 @@ async def webhook(request: Request):
         price = float(payload['price'])
         stop_loss = float(payload['stop_loss'])
 
-        # CÁLCULO MARGIN DEFINITIVO
+        # CÁLCULO MARGIN SIN WARNING
         balance = await exchange.fetch_balance()
         logger.info(f"Balance recibido: {balance}")
 
-        available_margin = 130.0  # fallback inicial seguro
-        try:
+        available_margin = 130.0  # fallback inicial
+        if 'info' in balance and 'flex' in balance['info'] and 'availableMargin' in balance['info']['flex']:
             available_margin = float(balance['info']['flex']['availableMargin'])
-            logger.info(f"Margen real usado: {available_margin}")
-        except (KeyError, TypeError, ValueError):
-            logger.warning("No se pudo leer 'flex', usando fallback 130.0")
 
         quantity = round((available_margin * 5) / price, 5)
         if quantity < 0.001:
