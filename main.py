@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Delay 10s Margen")
+app = FastAPI(title="Nova Kraken Bot - Antigua + Delay 10s")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Delay 10s activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Antigua + Delay 10s activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +42,7 @@ async def webhook(request: Request):
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Balance inicial
+        # Balance inicial para comparar
         balance = await exchange.fetch_balance()
         old_margin = 0.0
         try:
@@ -50,7 +50,7 @@ async def webhook(request: Request):
         except:
             pass
 
-        # Reversal
+        # Reversal simple
         positions = await exchange.fetch_positions([SYMBOL])
         closed = False
         for pos in positions:
@@ -63,7 +63,7 @@ async def webhook(request: Request):
 
         if closed:
             logger.info("Esperando 10 segundos para liberación margen...")
-            await asyncio.sleep(10)  # Delay 10 segundos
+            await asyncio.sleep(10)
 
             # Re-fetch y check margen liberado
             balance = await exchange.fetch_balance()
@@ -71,13 +71,13 @@ async def webhook(request: Request):
             try:
                 new_margin = float(balance['info']['flex']['availableMargin'])
             except:
-                logger.warning("Fallback usado después delay")
+                logger.warning("Fallback después delay")
 
-            if new_margin <= old_margin + 10:  # si no aumentó suficiente
-                logger.warning("Margen no liberado a tiempo, skipped nueva orden")
-                return {"status": "skipped", "message": "margen no liberado"}
+            if new_margin <= old_margin + 10:
+                logger.warning("Margen no liberado suficiente, skipped nueva")
+                return {"status": "skipped"}
 
-        # Cálculo quantity con margen actual
+        # Quantity en BTC (como la versión antigua que funcionaba)
         available_margin = 130.0
         try:
             available_margin = float(balance['info']['flex']['availableMargin'])
@@ -90,12 +90,12 @@ async def webhook(request: Request):
 
         # Orden principal
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
-        logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity}")
+        logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity BTC: {quantity}")
 
-        # SL
+        # SL con 'stop' (como la versión antigua)
         await exchange.create_order(
             SYMBOL,
-            'stopMarket',
+            'stop',
             sl_side,
             quantity,
             None,
