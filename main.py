@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Antigua + Delay 10s")
+app = FastAPI(title="Nova Kraken Bot - Antigua + Check Posición")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Antigua + Delay 10s activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Antigua + Check Posición activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +42,7 @@ async def webhook(request: Request):
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Balance inicial para comparar
+        # Balance inicial
         balance = await exchange.fetch_balance()
         old_margin = 0.0
         try:
@@ -65,7 +65,7 @@ async def webhook(request: Request):
             logger.info("Esperando 10 segundos para liberación margen...")
             await asyncio.sleep(10)
 
-            # Re-fetch y check margen liberado
+            # Re-fetch y check margen
             balance = await exchange.fetch_balance()
             new_margin = 0.0
             try:
@@ -77,7 +77,7 @@ async def webhook(request: Request):
                 logger.warning("Margen no liberado suficiente, skipped nueva")
                 return {"status": "skipped"}
 
-        # Quantity en BTC (como la versión antigua que funcionaba)
+        # Quantity en BTC
         available_margin = 130.0
         try:
             available_margin = float(balance['info']['flex']['availableMargin'])
@@ -92,7 +92,22 @@ async def webhook(request: Request):
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
         logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity BTC: {quantity}")
 
-        # SL con 'stop' (como la versión antigua)
+        # Check si Kraken la vio de verdad
+        await asyncio.sleep(3)
+        positions = await exchange.fetch_positions([SYMBOL])
+        real_qty = 0.0
+        for pos in positions:
+            if pos['symbol'] == SYMBOL:
+                pos_side = pos.get('side', '').lower()
+                pos_qty = float(pos.get('contracts', 0))
+                if pos_side == side.lower():
+                    real_qty = pos_qty
+
+        if real_qty < quantity * 0.9:  # si no está al 90%
+            logger.warning("Kraken NO confirmó la posición. No ponemos SL.")
+            return {"status": "failed_check"}
+
+        # SL (solo si Kraken confirmó)
         await exchange.create_order(
             SYMBOL,
             'stop',
@@ -105,7 +120,7 @@ async def webhook(request: Request):
                 'triggerPrice': stop_loss
             }
         )
-        logger.info(f"SL colocado en {stop_loss}")
+        logger.info(f"SL colocado en {stop_loss} (posición confirmada)")
 
         return {"status": "success"}
 
