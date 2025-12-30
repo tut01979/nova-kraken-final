@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Ejecuta Real USD")
+app = FastAPI(title="Nova Kraken Bot - Contratos USD")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Ejecuta Real USD activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Contratos USD activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -62,11 +62,11 @@ async def webhook(request: Request):
         except:
             logger.warning("Fallback usado")
 
-        # Quantity en contratos USD (entero)
-        quantity = int(available_margin * 5)  # exposición 5x en USD entero
-        if quantity < 50:  # mínimo seguro
-            logger.warning("Quantity mínima, no opera")
-            return {"status": "skipped", "message": "quantity pequeña"}
+        # Quantity en contratos USD entero
+        quantity = int(available_margin * 5)  # 5x entero
+        if quantity < 100:  # mínimo seguro para evitar invalidSize
+            logger.warning("Quantity mínima, skipped")
+            return {"status": "skipped"}
 
         # Orden principal
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
@@ -77,11 +77,7 @@ async def webhook(request: Request):
         order_status = await exchange.fetch_order(main_order['id'], SYMBOL)
         if order_status['filled'] > 0:
             logger.info(f"CONFIRMADA filled {order_status['filled']}")
-        else:
-            logger.warning(f"NO FILLED status {order_status['status']}")
-
-        # SL (solo si filled)
-        if order_status['filled'] > 0:
+            # SL
             await exchange.create_order(
                 SYMBOL,
                 'stop',
@@ -95,6 +91,8 @@ async def webhook(request: Request):
                 }
             )
             logger.info(f"SL colocado en {stop_loss}")
+        else:
+            logger.warning("NO FILLED")
 
         return {"status": "success"}
 
