@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Ejecuta Real")
+app = FastAPI(title="Nova Kraken Bot - Ejecuta Real USD")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Ejecuta Real activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Ejecuta Real USD activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +42,7 @@ async def webhook(request: Request):
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Reversal
+        # Reversal robusto
         positions = await exchange.fetch_positions([SYMBOL])
         closed = False
         for pos in positions:
@@ -62,45 +62,39 @@ async def webhook(request: Request):
         except:
             logger.warning("Fallback usado")
 
-        # Quantity entero (contratos USD, más seguro)
-        exposure = available_margin * 5
-        quantity = int(exposure)  # entero, Kraken lo acepta mejor
+        # Quantity en contratos USD (entero)
+        quantity = int(available_margin * 5)  # exposición 5x en USD entero
+        if quantity < 50:  # mínimo seguro
+            logger.warning("Quantity mínima, no opera")
+            return {"status": "skipped", "message": "quantity pequeña"}
 
-        if quantity < 10:  # mínimo razonable
-            return {"status": "error", "message": "quantity mínima"}
+        # Orden principal
+        main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
+        logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity contratos: {quantity}")
 
-        # Orden principal con retry
-        main_order = None
-        for attempt in range(2):
-            main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
-            logger.info(f"ORDEN ENVIADA (attempt {attempt+1}) → {main_order['id']} | Quantity: {quantity}")
+        # Check fill
+        await asyncio.sleep(5)
+        order_status = await exchange.fetch_order(main_order['id'], SYMBOL)
+        if order_status['filled'] > 0:
+            logger.info(f"CONFIRMADA filled {order_status['filled']}")
+        else:
+            logger.warning(f"NO FILLED status {order_status['status']}")
 
-            await asyncio.sleep(5)
-            order_status = await exchange.fetch_order(main_order['id'], SYMBOL)
-            if order_status['filled'] > 0:
-                logger.info(f"ORDEN CONFIRMADA → filled {order_status['filled']}")
-                break
-            else:
-                logger.warning(f"ORDEN NO FILLED → retry")
-
-        if order_status['filled'] == 0:
-            logger.error("ORDEN RECHAZADA FINALMENTE")
-            return {"status": "rejected"}
-
-        # SL
-        await exchange.create_order(
-            SYMBOL,
-            'stop',
-            sl_side,
-            quantity,
-            None,
-            params={
-                'reduceOnly': True,
-                'triggerSignal': 'last',
-                'triggerPrice': stop_loss
-            }
-        )
-        logger.info(f"SL colocado en {stop_loss}")
+        # SL (solo si filled)
+        if order_status['filled'] > 0:
+            await exchange.create_order(
+                SYMBOL,
+                'stop',
+                sl_side,
+                quantity,
+                None,
+                params={
+                    'reduceOnly': True,
+                    'triggerSignal': 'last',
+                    'triggerPrice': stop_loss
+                }
+            )
+            logger.info(f"SL colocado en {stop_loss}")
 
         return {"status": "success"}
 
