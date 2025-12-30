@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Contratos USD")
+app = FastAPI(title="Nova Kraken Bot - Delay 10s Margen")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Contratos USD activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Delay 10s activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +42,15 @@ async def webhook(request: Request):
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Reversal robusto
+        # Balance inicial
+        balance = await exchange.fetch_balance()
+        old_margin = 0.0
+        try:
+            old_margin = float(balance['info']['flex']['availableMargin'])
+        except:
+            pass
+
+        # Reversal
         positions = await exchange.fetch_positions([SYMBOL])
         closed = False
         for pos in positions:
@@ -52,47 +60,52 @@ async def webhook(request: Request):
                 await exchange.create_order(SYMBOL, 'market', sl_side, curr_qty)
                 logger.info(f"Reversal: cerrado {curr_side} {curr_qty}")
                 closed = True
-                await asyncio.sleep(5)
 
-        # Balance
-        balance = await exchange.fetch_balance()
+        if closed:
+            logger.info("Esperando 10 segundos para liberación margen...")
+            await asyncio.sleep(10)  # Delay 10 segundos
+
+            # Re-fetch y check margen liberado
+            balance = await exchange.fetch_balance()
+            new_margin = 0.0
+            try:
+                new_margin = float(balance['info']['flex']['availableMargin'])
+            except:
+                logger.warning("Fallback usado después delay")
+
+            if new_margin <= old_margin + 10:  # si no aumentó suficiente
+                logger.warning("Margen no liberado a tiempo, skipped nueva orden")
+                return {"status": "skipped", "message": "margen no liberado"}
+
+        # Cálculo quantity con margen actual
         available_margin = 130.0
         try:
             available_margin = float(balance['info']['flex']['availableMargin'])
         except:
             logger.warning("Fallback usado")
 
-        # Quantity en contratos USD entero
-        quantity = int(available_margin * 5)  # 5x entero
-        if quantity < 100:  # mínimo seguro para evitar invalidSize
-            logger.warning("Quantity mínima, skipped")
+        quantity = round((available_margin * 5) / price, 6)
+        if quantity < 0.001:
             return {"status": "skipped"}
 
         # Orden principal
         main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
-        logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity contratos: {quantity}")
+        logger.info(f"ORDEN EJECUTADA → {main_order['id']} | Quantity: {quantity}")
 
-        # Check fill
-        await asyncio.sleep(5)
-        order_status = await exchange.fetch_order(main_order['id'], SYMBOL)
-        if order_status['filled'] > 0:
-            logger.info(f"CONFIRMADA filled {order_status['filled']}")
-            # SL
-            await exchange.create_order(
-                SYMBOL,
-                'stop',
-                sl_side,
-                quantity,
-                None,
-                params={
-                    'reduceOnly': True,
-                    'triggerSignal': 'last',
-                    'triggerPrice': stop_loss
-                }
-            )
-            logger.info(f"SL colocado en {stop_loss}")
-        else:
-            logger.warning("NO FILLED")
+        # SL
+        await exchange.create_order(
+            SYMBOL,
+            'stopMarket',
+            sl_side,
+            quantity,
+            None,
+            params={
+                'reduceOnly': True,
+                'triggerSignal': 'last',
+                'triggerPrice': stop_loss
+            }
+        )
+        logger.info(f"SL colocado en {stop_loss}")
 
         return {"status": "success"}
 
