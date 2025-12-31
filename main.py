@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - Check + Retry")
+app = FastAPI(title="Nova Kraken Bot - Retry + Long Sleep")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -20,7 +20,7 @@ SYMBOL = 'PF_XBTUSD'
 
 @app.get("/")
 async def root():
-    return {"status": "Nova Bot Check + Retry activo", "symbol": SYMBOL}
+    return {"status": "Nova Bot Retry + Long Sleep activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +42,7 @@ async def webhook(request: Request):
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Reversal simple
+        # Reversal
         positions = await exchange.fetch_positions([SYMBOL])
         closed = False
         for pos in positions:
@@ -52,7 +52,7 @@ async def webhook(request: Request):
                 await exchange.create_order(SYMBOL, 'market', sl_side, curr_qty)
                 logger.info(f"Reversal: cerrado {curr_side} {curr_qty}")
                 closed = True
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)  # más tiempo para liberación
 
         # Balance
         balance = await exchange.fetch_balance()
@@ -66,14 +66,14 @@ async def webhook(request: Request):
         if quantity < 0.001:
             return {"status": "skipped"}
 
-        # Orden principal con retry
-        main_order = None
+        # Orden principal con retry + long sleep
         confirmed = False
-        for attempt in range(3):  # retry 3 veces
+        for attempt in range(3):
             main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
             logger.info(f"ORDEN EJECUTADA (attempt {attempt+1}) → {main_order['id']} | Quantity: {quantity}")
 
-            await asyncio.sleep(5)  # espera confirmación
+            await asyncio.sleep(10)  # long sleep para Kraken actualice
+
             positions = await exchange.fetch_positions([SYMBOL])
             real_qty = 0.0
             for pos in positions:
@@ -81,7 +81,7 @@ async def webhook(request: Request):
                     real_qty = float(pos.get('contracts', 0))
 
             if real_qty >= quantity * 0.9:
-                logger.info(f"CONFIRMADA en attempt {attempt+1} → filled {real_qty}")
+                logger.info(f"CONFIRMADA en attempt {attempt+1}")
                 confirmed = True
                 break
             else:
