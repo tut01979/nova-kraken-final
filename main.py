@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nova Kraken Bot - SL Seguro")
+app = FastAPI(title="Nova Kraken Bot - SL Siempre + Long Sleep")
 
 exchange = ccxt.krakenfutures({
     'apiKey': os.getenv('KRAKEN_API_KEY'),
@@ -17,6 +17,10 @@ exchange = ccxt.krakenfutures({
 })
 
 SYMBOL = 'PF_XBTUSD'
+
+@app.get("/")
+async def root():
+    return {"status": "Nova Bot SL Siempre activo", "symbol": SYMBOL}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -38,8 +42,8 @@ async def webhook(request: Request):
         side = 'buy' if action == 'buy' else 'sell'
         sl_side = 'sell' if action == 'buy' else 'buy'
 
-        # Reversal
-        positions = await exchange.fetch_positions([SYMBOL])
+        # Reversal simple: cerrar posición contraria si existe
+        positions = await exchange.fetch_positions()
         closed = False
         for pos in positions:
             curr_qty = float(pos.get('contracts', 0))
@@ -48,63 +52,30 @@ async def webhook(request: Request):
                 await exchange.create_order(SYMBOL, 'market', sl_side, curr_qty)
                 logger.info(f"Reversal: cerrado {curr_side} {curr_qty}")
                 closed = True
-                await asyncio.sleep(10)
 
-        # Balance
+        if closed:
+            await asyncio.sleep(5)
+
+        # Balance y cálculo de cantidad
         balance = await exchange.fetch_balance()
         available_margin = 130.0
         try:
             available_margin = float(balance['info']['flex']['availableMargin'])
         except:
-            logger.warning("Fallback usado")
+            logger.warning("Fallback usado para availableMargin")
 
         quantity = round((available_margin * 5) / price, 6)
         if quantity < 0.001:
             return {"status": "skipped"}
 
-        # Orden principal con retry
-        confirmed = False
-        main_order = None
-        for attempt in range(3):
-            try:
-                main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
-                logger.info(f"ORDEN EJECUTADA (attempt {attempt+1}) → {main_order['id']} | Quantity: {quantity}")
+        # Orden principal
+        main_order = await exchange.create_order(SYMBOL, 'market', side, quantity)
+        logger.info(f"ORDEN EJECUTADA → {main_order['id']}")
 
-                await asyncio.sleep(10)
+        # Long sleep para que Kraken actualice la posición
+        await asyncio.sleep(10)
 
-                positions = await exchange.fetch_positions([SYMBOL])
-                real_qty = 0.0
-                for pos in positions:
-                    if pos['symbol'] == SYMBOL and pos.get('side', '').lower() == side.lower():
-                        real_qty = float(pos.get('contracts', 0))
-
-                if real_qty >= quantity * 0.8:
-                    logger.info(f"CONFIRMADA en attempt {attempt+1}")
-                    confirmed = True
-                    break
-            except Exception as e:
-                if "insufficientAvailableFunds" in str(e):
-                    logger.warning("insufficientFunds, skipped")
-                    return {"status": "skipped"}
-
-        # Último check antes de SL (para posiciones que aparecen tarde)
-        if not confirmed:
-            await asyncio.sleep(5)
-            positions = await exchange.fetch_positions([SYMBOL])
-            real_qty = 0.0
-            for pos in positions:
-                if pos['symbol'] == SYMBOL and pos.get('side', '').lower() == side.lower():
-                    real_qty = float(pos.get('contracts', 0))
-
-            if real_qty >= quantity * 0.8:
-                logger.info("CONFIRMADA tarde, pero ponemos SL")
-                confirmed = True
-
-        if not confirmed:
-            logger.warning("NO CONFIRMADA final, no SL")
-            return {"status": "failed"}
-
-        # SL seguro
+        # Colocamos el Stop Loss siempre (reduceOnly)
         await exchange.create_order(
             SYMBOL,
             'stop',
@@ -117,7 +88,7 @@ async def webhook(request: Request):
                 'triggerPrice': stop_loss
             }
         )
-        logger.info(f"SL colocado en {stop_loss} (posición confirmada)")
+        logger.info(f"SL colocado en {stop_loss} – SIEMPRE")
 
         return {"status": "success"}
 
