@@ -64,7 +64,7 @@ async def webhook(request: Request):
         except:
             logger.warning("Fallback usado para availableMargin")
 
-        quantity = round((available_margin * 5) / price, 6)
+        quantity = round((available_margin * 8) / price, 6)
         if quantity < 0.001:
             return {"status": "skipped"}
 
